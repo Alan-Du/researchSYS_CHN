@@ -3,9 +3,10 @@
 """
 import os
 import requests
-import dString
+import dString, arrayTools
 import dPickle as dpk
 import futTickers
+from datetime import datetime
 
 ##################################################
 ##################################################
@@ -44,15 +45,26 @@ class sinaDownloader():
             return {"sym":ticker, "date":[], "open":[], "high":[], "low":[], "close":[], "volume":[]}
         ans = dString.SINAtolist(page)
         dataDict = {"sym":ticker, 
-                    "date":[ele[0] for ele in ans], 
+                    "date":[ele[0] for ele in ans],
                     "open":[ele[1] for ele in ans],
                     "high":[ele[2] for ele in ans], 
                     "low":[ele[3] for ele in ans],
                     "close":[ele[4] for ele in ans], 
                     "adjClose":[ele[4] for ele in ans], 
                     "volume":[ele[5] for ele in ans]}
+        # only update data in range
+        dataDict = self._filterDates(dataDict, start_t, end_t)
         return dataDict
-    
+
+    # ---------------------------------------------
+    def _filterDates(self, dataDict, start_t, end_t):
+        # filter data based on dates
+        if isinstance(start_t, str):
+            start_t = datetime.strptime(start_t, '%Y-%m-%d').date()
+            end_t = datetime.strptime(end_t, '%Y-%m-%d').date()
+        dataDict = arrayTools.sliceDataByDates(dataDict, start_t, end_t)
+        return dataDict
+
     #---------------------------------------------
     def _savePickle(self, data, fname=""):
         # save new data into pickles

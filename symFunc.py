@@ -5,7 +5,7 @@
     ...
 """
 import dPickle as dpk
-import listTools
+import arrayTools
 import os
 # global dictionary
 symtpyeDict = {

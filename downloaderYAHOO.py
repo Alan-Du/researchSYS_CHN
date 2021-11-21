@@ -73,13 +73,12 @@ class yahooDownloader():
 ##################################################
 ##################################################
 if __name__ == "__main__":
-    testTickers = []
-    savepath = "C:/EQdata/"
-    #savepath = "C:/FXdata/"
-    #savepath = "C:/FUTdataus/"
-    tkrNames = stockTickers.stockTickers
+    # savepath = "C:/EQdata/"
+    # savepath = "C:/FXdata/"
+    savepath = "C:/FUTdataus/"
+    # tkrNames = stockTickers.stockTickers
     #tkrNames = fxTickers.FX
-    #tkrNames = commodityTickersUS.USCOMMODITYALL
+    tkrNames = futTickersUS.USCOMMODITYALL
     stkr = yahooDownloader(tkrNames, savepath)
-    stkr._runTickers("2015-01-01", "2021-11-13", use_tickers=testTickers)
+    stkr._runTickers("2015-01-01", "2021-11-13")
     

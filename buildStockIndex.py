@@ -7,12 +7,13 @@
 """
 import numpy as np
 import dPickle as dpk
-import dataTools
-import listTools
+import dStats
+import arrayTools
 import stockTickers
 from datetime import datetime
 import plotFunc as pltF
 import symFunc
+import dCalCorr
 
 FUTEQmap = {
     # METALS
@@ -47,8 +48,8 @@ def recalIndexTkrs(corList, covData):
     for tk in corList:
         sym, lag, cor = tk
         colN = symFunc.sym2Colname(sym)
-        lgRetX = listTools.price2LgRet(covData[colN])
-        lagX = listTools.addLagLi(lgRetX, lag)
+        lgRetX = arrayTools.price2LgRet(covData[colN])
+        lagX = dStats.addLagLi(lgRetX, lag)
         wgts = cor/sumWgts
         if len(indexLgRet) == 0:
             indexLgRet = lagX*wgts
@@ -74,7 +75,64 @@ def loadModelSIndex(tgtSym, path="C:/models/"):
     return sIndexDict
 
 #---------------------------------------------
-def loopAllFUT(sdate, edate, topN=5):
+def calIndexV1(combData, N=2):
+    # calculate user defined sector index
+    # method 1: cut off highest and lowest lgRet
+    priCols = [ele for ele in combData.keys() if "Pri" in ele]
+    ansLgRet = []
+    for loc in range(1, len(combData["date"])):
+        lgRetLi = [np.log(combData[pc][loc]/combData[pc][loc-1]) for pc in priCols]
+        lgRetLi = arrayTools.cutOffExtremeN(lgRetLi, N)
+        ansLgRet.append(np.average(lgRetLi))
+    return arrayTools.lgRet2Price(ansLgRet)
+
+#---------------------------------------------
+def calIndexV2(combData, N=1):
+    # calculate user defined sector index
+    # method 2: cut off highest and lowest lgRet weighted by money volume
+    priCols = sorted([ele for ele in combData.keys() if "Pri" in ele])
+    vlmCols = sorted([ele for ele in combData.keys() if "Vlm" in ele])
+    ansLgRet = []
+    for loc in range(1, len(combData["date"])):
+        lgRetLi = [np.log(combData[pc][loc]/combData[pc][loc-1]) for pc in priCols]
+        priLi = [combData[pc][loc] for pc in priCols]
+        vlmLi = [combData[vm][loc] for vm in vlmCols]
+        lgRetLi = arrayTools.cutOffExtremeNwtVlm(lgRetLi, priLi, vlmLi, N)
+        ansLgRet.append(np.average(lgRetLi))
+    return arrayTools.lgRet2Price(ansLgRet)
+
+#---------------------------------------------
+def calIndexV3(combData, pct=0.3):
+    # calculate user defined sector index
+    # method 3: cut off highest and lowest lgRet weighted by money volume
+    priCols = sorted([ele for ele in combData.keys() if "Pri" in ele])
+    vlmCols = sorted([ele for ele in combData.keys() if "Vlm" in ele])
+    ansLgRet = []
+    for loc in range(1, len(combData["date"])):
+        lgRetLi = [np.log(combData[pc][loc]/combData[pc][loc-1]) for pc in priCols]
+        priLi = [combData[pc][loc] for pc in priCols]
+        vlmLi = [combData[vm][loc] for vm in vlmCols]
+        lgRetLi = arrayTools.cutOffExtremeNwtVlmPct(lgRetLi, priLi, vlmLi, pct)
+        ansLgRet.append(np.average(lgRetLi))
+    return arrayTools.lgRet2Price(ansLgRet)
+
+#---------------------------------------------
+def calSingleSym(tgtSym, sdate, edate, topN=5):
+    # calcualte single sym index covariates
+    tkrsLi = FUTEQmap.get(tgtSym, None)
+    if tkrsLi is None: return None
+    tgtData = dpk.getPickle(tgtSym)
+    yDateLiFull = tgtData["date"]  # need this as full x-axis
+    if len(yDateLiFull) == 0: return None
+    tgtData = arrayTools.sliceDataByDates(tgtData, sdate, edate)
+    corList = dCalCorr.findBestCOVs(tgtData, tkrsLi, yDateLiFull)
+    # select top N best covariates
+    corList = sorted(corList, key=lambda x: abs(x[2]), reverse=True)[:topN]
+    print("SYM:%s, stock index calibration:" % tgtSym, corList)
+    return corList
+
+#---------------------------------------------
+def loopAllFUT(sdate, edate, topN=5, plotFalg = True):
     # loop through all fut tickers
     # default assumption is slice from sdate to edate
     # but in realty there could be lag factor
@@ -83,26 +141,14 @@ def loopAllFUT(sdate, edate, topN=5):
     # two series in same length
     for tgtSym,tkrsLi in FUTEQmap.items():
         print("Processing %s"%tgtSym)
-        tgtData = dpk.getPickle(tgtSym, path="C:/FUTdata/")
-        yDateLiFull = tgtData["date"] # need this as full x-axis
-        if len(yDateLiFull)==0: continue
-        tgtData = listTools.sliceDataByDates(tgtData, sdate, edate)
-        covData = listTools.alignDataToYdata(tkrsLi, tgtData)
-        corList = dataTools.findBestCOVs(tgtData, tkrsLi, covData, yDateLiFull)
-        # select top N best covariates
-        corList = sorted(corList, key=lambda x:abs(x[2]),reverse=True)[:topN]
-        print("SYM:%s, stock index calibration:"%tgtSym, corList)
+        corList = calSingleSym(tgtSym, sdate, edate, topN=topN)
         # save model to disk
         dumpModelSIndex(tgtSym, corList)
-        indexLgRet = recalIndexTkrs(corList, covData)
-        indexLgRet = listTools.mavg1D(indexLgRet, N=5)
-        indexPrice = listTools.lgRet2Price(indexLgRet)
-        tgtNormPri = tgtData["adjClose"]/tgtData["adjClose"][0]
-        fig = pltF.plotCompare2(tgtData["date"], tgtNormPri, indexPrice,
-                                label1=tgtSym, label2="sIndex", title=tgtSym+"_SIM",
-                                wantShow=False)
-        plotPath="C:/plots/sIndex/"
-        fig.savefig(plotPath+tgtSym+"_SIM.png")
+        if plotFalg:
+            # plot index compare along the way
+            tgtData = dpk.getPickle(tgtSym)
+            yDateLiFull = tgtData["date"]
+            pltF.plotIndexGivenCor(corList, sdate, edate, yDateLiFull, tgtSym, tgtData)
     return None
 
 #---------------------------------------------
@@ -111,12 +157,12 @@ def calsIndexfromModel(tgtSym, sdate, edate, smoothN=5):
     # loop through all fut tickers
     # function will use saved weights and lag 
     # also use new sdate and edate to recalculate
+    yDates = arrayTools.sliceYDates(tgtSym, sdate, edate)
     corList = loadModelSIndex(tgtSym, path="C:/models/")["corList"]
-    print("Load model %s from disk..."%tgtSym)
-    print(corList)
-    lgRetIndex,date = dataTools.getIndexLgRet(sdate, edate, corList)
-    lgRetIndex = listTools.mavg1D(lgRetIndex, N=smoothN)
-    priceIndex = listTools.lgRet2Price(lgRetIndex)
+    print("Load model %s from disk..."%tgtSym, corList)
+    lgRetIndex,date = dCalCorr.calIndexGivenCorLi(corList, sdate, edate, yDates)
+    lgRetIndex = dStats.mavg1D(lgRetIndex, N=smoothN)
+    priceIndex = arrayTools.lgRet2Price(lgRetIndex)
     return priceIndex, date
 
 ##################################################
